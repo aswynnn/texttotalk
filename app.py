@@ -4,44 +4,49 @@ import fitz  # PyMuPDF
 from docx import Document
 from dotenv import load_dotenv
 import os
-import tempfile
+import json
 from google.cloud import texttospeech
+from google.oauth2 import service_account
 
 # --- Configuration and Initialization ---
 
-# Load environment variables from a .env file if it exists
+# Load environment variables from a .env file if it exists (for local development)
 load_dotenv()
 
-# Set Google Cloud credentials from environment variables
-# Note: For Streamlit Cloud, set this as a secret.
-if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in st.secrets:
-    creds_json = st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".json") as temp_creds:
-        temp_creds.write(creds_json)
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = temp_creds.name
-elif "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
-    pass # Already set
-else:
-    st.error("Google Cloud credentials are not set. Please configure them in your environment or Streamlit secrets.")
+# --- Initialize Google TTS Client ---
+# This is done first to catch credential errors early.
+tts_client = None
+try:
+    # Method 1: Use Streamlit secrets (for deployment)
+    if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in st.secrets:
+        creds_json_str = st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
+        creds_info = json.loads(creds_json_str)
+        credentials = service_account.Credentials.from_service_account_info(creds_info)
+        tts_client = texttospeech.TextToSpeechClient(credentials=credentials)
+    # Method 2: Use environment variables (for local development)
+    elif "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
+        # The client will automatically find the credentials from the environment variable.
+        tts_client = texttospeech.TextToSpeechClient()
+    else:
+        st.error("Google Cloud credentials are not set. Please configure them for local development or in Streamlit secrets for deployment.")
+        st.stop()
+except json.JSONDecodeError:
+    st.error("Error decoding Google credentials from Streamlit secret. Please check the format of your secret to ensure it is a valid, single-line JSON string.")
+    st.stop()
+except Exception as e:
+    st.error(f"Failed to initialize Google TTS client. Error: {e}")
     st.stop()
 
 
-# Initialize Hugging Face pipelines
-# Using a specific BART model for summarization
+# --- Initialize Hugging Face Pipelines ---
 try:
+    # Using a specific BART model for summarization
     # Forcing the model to run on CPU to prevent "meta tensor" errors on some hardware (e.g., M1/M2 Macs)
     summarizer = pipeline("summarization", model="facebook/bart-large-cnn", device="cpu")
     # Using a smaller model for text generation to keep it faster
     text_generator = pipeline("text-generation", model="distilgpt2", device="cpu")
 except Exception as e:
     st.error(f"Failed to load Hugging Face models. Error: {e}")
-    st.stop()
-
-# Initialize Google TTS Client
-try:
-    tts_client = texttospeech.TextToSpeechClient()
-except Exception as e:
-    st.error(f"Failed to initialize Google TTS client. Error: {e}")
     st.stop()
 
 
