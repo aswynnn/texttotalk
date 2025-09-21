@@ -1,0 +1,9 @@
+streamlit
+transformers
+torch
+sentencepiece
+fitz
+PyMuPDF
+python-docx
+python-dotenv
+google-cloud-texttospeech
