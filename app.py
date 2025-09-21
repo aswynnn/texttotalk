@@ -20,9 +20,14 @@ try:
     # Method 1: Use Streamlit secrets (for deployment)
     if "GOOGLE_APPLICATION_CREDENTIALS_JSON" in st.secrets:
         creds_json_str = st.secrets["GOOGLE_APPLICATION_CREDENTIALS_JSON"]
-        creds_info = json.loads(creds_json_str)
+        
+        # Clean the string to remove non-standard whitespace before parsing.
+        cleaned_creds_str = creds_json_str.replace('\u00a0', ' ')
+        
+        creds_info = json.loads(cleaned_creds_str)
         credentials = service_account.Credentials.from_service_account_info(creds_info)
         tts_client = texttospeech.TextToSpeechClient(credentials=credentials)
+        
     # Method 2: Use environment variables (for local development)
     elif "GOOGLE_APPLICATION_CREDENTIALS" in os.environ:
         # The client will automatically find the credentials from the environment variable.
@@ -31,7 +36,7 @@ try:
         st.error("Google Cloud credentials are not set. Please configure them for local development or in Streamlit secrets for deployment.")
         st.stop()
 except json.JSONDecodeError:
-    st.error("Error decoding Google credentials from Streamlit secret. Please check the format of your secret to ensure it is a valid, single-line JSON string.")
+    st.error("Error decoding Google credentials from Streamlit secret. Even after cleaning, the JSON is invalid. Please double-check the value in your Streamlit secrets.")
     st.stop()
 except Exception as e:
     st.error(f"Failed to initialize Google TTS client. Error: {e}")
@@ -153,94 +158,98 @@ st.markdown("Turn any text, document, or topic into a professional-sounding podc
 
 # Sidebar for voice selection
 st.sidebar.header("⚙️ Podcast Settings")
-available_voices = get_available_voices()
-selected_voice = st.sidebar.selectbox(
-    "Choose a Voice",
-    options=available_voices,
-    help="Select from a list of available high-quality voices from Google."
-)
+if tts_client:
+    available_voices = get_available_voices()
+    selected_voice = st.sidebar.selectbox(
+        "Choose a Voice",
+        options=available_voices,
+        help="Select from a list of available high-quality voices from Google."
+    )
+else:
+    st.sidebar.warning("Voice selection disabled until credentials are resolved.")
+
 
 # --- Main Content Area with Tabs ---
+if tts_client:
+    tab1, tab2, tab3 = st.tabs(["📄 Upload a Document", "✍️ Enter Raw Text", "💡 Generate from Topic"])
 
-tab1, tab2, tab3 = st.tabs(["📄 Upload a Document", "✍️ Enter Raw Text", "💡 Generate from Topic"])
-
-# --- Tab 1: Upload a Document ---
-with tab1:
-    st.header("Summarize a Document into a Podcast Script")
-    uploaded_file = st.file_uploader(
-        "Upload a .txt, .pdf, or .docx file",
-        type=["txt", "pdf", "docx"]
-    )
-    
-    if uploaded_file:
-        raw_text = extract_text_from_file(uploaded_file)
-        if raw_text:
-            st.success("File successfully uploaded and text extracted.")
-            if st.button("Analyze and Summarize Document", key="summarize_doc"):
+    # --- Tab 1: Upload a Document ---
+    with tab1:
+        st.header("Summarize a Document into a Podcast Script")
+        uploaded_file = st.file_uploader(
+            "Upload a .txt, .pdf, or .docx file",
+            type=["txt", "pdf", "docx"]
+        )
+        
+        if uploaded_file:
+            raw_text = extract_text_from_file(uploaded_file)
+            if raw_text:
+                st.success("File successfully uploaded and text extracted.")
+                if st.button("Analyze and Summarize Document", key="summarize_doc"):
+                    summary = process_text_in_chunks(
+                        raw_text, 
+                        summarizer, 
+                        min_length=30, 
+                        max_length=150
+                    )
+                    st.session_state.editable_text = summary
+            
+    # --- Tab 2: Enter Raw Text ---
+    with tab2:
+        st.header("Convert Your Text into a Podcast Script")
+        raw_text_input = st.text_area("Paste your text here:", height=250, placeholder="Enter any text you want to convert...")
+        
+        if st.button("Process and Summarize Text", key="summarize_text"):
+            if raw_text_input.strip():
                 summary = process_text_in_chunks(
-                    raw_text, 
-                    summarizer, 
-                    min_length=30, 
+                    raw_text_input,
+                    summarizer,
+                    min_length=30,
                     max_length=150
                 )
                 st.session_state.editable_text = summary
+            else:
+                st.warning("Please enter some text to process.")
+                
+    # --- Tab 3: Generate from Topic ---
+    with tab3:
+        st.header("Generate a Podcast Script from a Topic")
+        topic_input = st.text_input("Enter a topic or keyword:", placeholder="e.g., 'The history of artificial intelligence'")
         
-# --- Tab 2: Enter Raw Text ---
-with tab2:
-    st.header("Convert Your Text into a Podcast Script")
-    raw_text_input = st.text_area("Paste your text here:", height=250, placeholder="Enter any text you want to convert...")
-    
-    if st.button("Process and Summarize Text", key="summarize_text"):
-        if raw_text_input.strip():
-            summary = process_text_in_chunks(
-                raw_text_input,
-                summarizer,
-                min_length=30,
-                max_length=150
-            )
-            st.session_state.editable_text = summary
-        else:
-            st.warning("Please enter some text to process.")
-            
-# --- Tab 3: Generate from Topic ---
-with tab3:
-    st.header("Generate a Podcast Script from a Topic")
-    topic_input = st.text_input("Enter a topic or keyword:", placeholder="e.g., 'The history of artificial intelligence'")
-    
-    if st.button("Generate Script", key="generate_topic"):
-        if topic_input.strip():
-            generated_script = generate_script_from_topic(topic_input)
-            st.session_state.editable_text = generated_script
-        else:
-            st.warning("Please enter a topic.")
+        if st.button("Generate Script", key="generate_topic"):
+            if topic_input.strip():
+                generated_script = generate_script_from_topic(topic_input)
+                st.session_state.editable_text = generated_script
+            else:
+                st.warning("Please enter a topic.")
 
-# --- Shared UI for Editing and Generation ---
+    # --- Shared UI for Editing and Generation ---
 
-if 'editable_text' in st.session_state and st.session_state.editable_text:
-    st.divider()
-    st.subheader("✍️ Review and Edit Your Podcast Script")
-    st.markdown("Your generated script is ready. You can make any changes here before converting it to audio.")
-    
-    edited_text = st.text_area(
-        "Editable Script:",
-        value=st.session_state.editable_text,
-        height=300,
-        key="editor"
-    )
+    if 'editable_text' in st.session_state and st.session_state.editable_text:
+        st.divider()
+        st.subheader("✍️ Review and Edit Your Podcast Script")
+        st.markdown("Your generated script is ready. You can make any changes here before converting it to audio.")
+        
+        edited_text = st.text_area(
+            "Editable Script:",
+            value=st.session_state.editable_text,
+            height=300,
+            key="editor"
+        )
 
-    if st.button("🎤 Generate Podcast Audio", type="primary"):
-        if edited_text.strip():
-            with st.spinner(f"Generating audio with voice '{selected_voice}'... This may take a moment."):
-                audio_bytes = synthesize_speech(edited_text, selected_voice)
-                if audio_bytes:
-                    st.success("Podcast generated successfully!")
-                    st.audio(audio_bytes, format="audio/mp3")
-                    st.download_button(
-                        label="⬇️ Download Podcast (MP3)",
-                        data=audio_bytes,
-                        file_name="generated_podcast.mp3",
-                        mime="audio/mp3"
-                    )
-        else:
-            st.error("The script is empty. Please generate or enter some text.")
+        if st.button("🎤 Generate Podcast Audio", type="primary"):
+            if edited_text.strip():
+                with st.spinner(f"Generating audio with voice '{selected_voice}'... This may take a moment."):
+                    audio_bytes = synthesize_speech(edited_text, selected_voice)
+                    if audio_bytes:
+                        st.success("Podcast generated successfully!")
+                        st.audio(audio_bytes, format="audio/mp3")
+                        st.download_button(
+                            label="⬇️ Download Podcast (MP3)",
+                            data=audio_bytes,
+                            file_name="generated_podcast.mp3",
+                            mime="audio/mp3"
+                        )
+            else:
+                st.error("The script is empty. Please generate or enter some text.")
 
