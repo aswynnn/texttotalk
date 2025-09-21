@@ -29,9 +29,10 @@ else:
 # Initialize Hugging Face pipelines
 # Using a specific BART model for summarization
 try:
-    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    # Forcing the model to run on CPU to prevent "meta tensor" errors on some hardware (e.g., M1/M2 Macs)
+    summarizer = pipeline("summarization", model="facebook/bart-large-cnn", device="cpu")
     # Using a smaller model for text generation to keep it faster
-    text_generator = pipeline("text-generation", model="distilgpt2")
+    text_generator = pipeline("text-generation", model="distilgpt2", device="cpu")
 except Exception as e:
     st.error(f"Failed to load Hugging Face models. Error: {e}")
     st.stop()
@@ -237,3 +238,4 @@ if 'editable_text' in st.session_state and st.session_state.editable_text:
                     )
         else:
             st.error("The script is empty. Please generate or enter some text.")
+
